@@ -1,0 +1,752 @@
+---
+title: "Tarea 3 "
+name: "Mario Rangel"
+lang: es
+format:
+  html:
+    grid:
+      body-width: 1200px 
+---
+
+Instalar las bibliotecas: `openpyxl`, `datetime`, `plotly` y `statsmodels`; para manejar archivos Excel, trabajar con fechas, crear gráficos interactivos y realizar análisis de series temporales, respectivamente. Agregar también la extension `Data Wrangler` para facilitar la manipulación de datos en `pandas`.
+
+
+```{python}
+#| echo: false
+
+import numpy as np
+import matplotlib.pyplot as plt
+import yfinance as yf
+import pandas as pd
+
+import matplotlib.ticker as ticker
+import seaborn as sns
+import plotly.express as px
+import plotly.graph_objects as go
+import calendar
+import statsmodels.api as sm
+import statsmodels.graphics.tsaplots as tsaplots
+import statsmodels.tsa.stattools as ts
+import statsmodels.tsa.seasonal as seasonal
+```
+
+
+## Indicadores Económicos del INEGI
+
+**Cargar datos**
+
+```{python}
+#| code-fold: true
+#| fig-align: "center"
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Cargar archivo sin encabezado
+data_inegi = pd.read_excel("igae_indice.xlsx", header=None)
+
+print(data_inegi.head(10))
+print(data_inegi.shape)
+```
+
+```{python}
+#| code-fold: true
+
+# Fila de años, meses y valores del IGAE general
+years_row = data_inegi.iloc[4, 2:]
+months_row = data_inegi.iloc[5, 2:]
+igae_row = data_inegi.iloc[6, 2:]
+
+# Convertir a listas
+years = years_row.tolist()
+months = months_row.tolist()
+values = igae_row.tolist()
+
+# Rellenar años hacia la derecha
+years_filled = pd.Series(years).ffill().tolist()
+
+# Diccionario de meses
+meses = {
+    "ENE": 1, "FEB": 2, "MAR": 3, "ABR": 4,
+    "MAY": 5, "JUN": 6, "JUL": 7, "AGO": 8,
+    "SEP": 9, "OCT": 10, "NOV": 11, "DIC": 12
+}
+
+# Construir DataFrame limpio
+df = pd.DataFrame({
+    "Año": years_filled,
+    "Mes": months,
+    "IGAE": values
+})
+
+# Limpiar datos
+df["Año"] = pd.to_numeric(df["Año"], errors="coerce")
+df["Mes"] = df["Mes"].astype(str).str.strip().str.upper()
+df["Mes_num"] = df["Mes"].map(meses)
+df["IGAE"] = pd.to_numeric(df["IGAE"], errors="coerce")
+
+# Eliminar filas inválidas
+df = df.dropna(subset=["Año", "Mes_num", "IGAE"])
+
+# Convertir tipos
+df["Año"] = df["Año"].astype(int)
+df["Mes_num"] = df["Mes_num"].astype(int)
+
+# Crear fecha
+df["Fecha"] = pd.to_datetime(
+    dict(year=df["Año"], month=df["Mes_num"], day=1)
+)
+
+# Ordenar por fecha
+df = df.sort_values("Fecha")
+
+print(df.head())
+print(df.tail())
+print(df.info())
+```
+
+**Para este código si me tuve que ayudar de IA porque no podía cargar los datos y me daba todo desacomodado INEGI. Y cuando quise hacer las gráficas no me aparecía nada**
+
+Así que se cargaron los datos del Indicador Global de la Actividad Económica (IGAE). Se limpiaron y reorganizaron los datos.
+
+### Evolución de la actividad económica en México (IGAE)
+
+En esta sección, se grafica la serie temporal del Indicador Global de la Actividad Económica (IGAE) para observar su evolución a lo largo del tiempo. Este indicador permite analizar la economía mexicana, identificar patrones estacionales, tendencias y posibles cambios en la actividad económica.
+
+```{python}
+#| code-fold: true
+
+df_igae = df[["Fecha", "IGAE"]].dropna()
+
+df_igae.info()
+print(f"Fecha de inicio: {df_igae['Fecha'].min()}")
+print(f"Fecha de fin: {df_igae['Fecha'].max()}")
+print("------")
+
+print("Estadísticas descriptivas del IGAE:")
+print(df_igae["IGAE"].describe())
+```
+
+
+**Serie temporal del IGAE**
+
+Una serie temporal es una secuencia de datos recopilados o registrados en intervalos de tiempo sucesivos. En este caso, se analiza el IGAE como una serie temporal para visualizar su evolución, comportamiento y detectar posibles tendencias o patrones estacionales en la actividad económica de México
+
+```{python}
+#| code-fold: true
+
+# Configurar la columna "Fecha" como índice
+df_igae.set_index("Fecha", inplace=True)
+
+# Definir la serie temporal
+igae_ts = df_igae["IGAE"]
+
+print(igae_ts.info())
+```
+
+
+**Gráfica de la serie temporal de IGAE**
+
+```{python}
+#| code-fold: true
+#| fig-align: "center"
+
+plt.figure(figsize=(12, 6))
+plt.plot(igae_ts.index, igae_ts.values, marker='o', ms=3)
+plt.title("Indicador Global de la Actividad Económica (IGAE)")
+plt.xlabel("Fecha")
+plt.ylabel("Índice")
+plt.grid(alpha=0.3)
+plt.show()
+```
+
+**Filtramos datos y ponemos IGAE en años recientes**
+
+```{python}
+#| code-fold: true
+#| fig-align: "center"
+
+igae_recent = igae_ts[igae_ts.index >= "2015-01-01"]
+
+plt.figure(figsize=(12, 6))
+plt.plot(igae_recent.index, igae_recent.values, marker='o', ms=5)
+plt.title("IGAE (desde 2015)")
+plt.xlabel("Fecha")
+plt.ylabel("Índice")
+plt.grid(alpha=0.3)
+plt.show()
+```
+
+
+**Gráfica interactiva de la serie temporal de IGAE**
+
+```{python}
+#| code-fold: true
+#| fig-align: "center"
+
+fig = px.line(x=igae_recent.index,y=igae_recent.values, title="IGAE (desde 2015)",labels={"x": "Fecha", "y": "Índice"}
+)
+fig.update_xaxes(rangeslider_visible=True)
+fig
+```
+
+
+
+**Comparación anual IGAE**
+
+
+```{python}
+#| code-fold: true
+#| fig-align: "center"
+
+# Preparación de datos para la gráfica de comparación anual
+df_igae_anual = igae_recent.reset_index()
+df_igae_anual['Año'] = df_igae_anual['Fecha'].dt.year
+df_igae_anual['Mes'] = df_igae_anual['Fecha'].dt.month
+df_igae_anual["Nombre_mes"] = df_igae_anual['Fecha'].dt.strftime('%b')
+
+
+plt.figure(figsize=(12, 6))
+sns.lineplot(data=df_igae_anual, x='Nombre_mes', y='IGAE', hue='Año', marker='o', palette='tab10')
+plt.title('Comparación Anual del IGAE')
+plt.xlabel('Mes')
+plt.ylabel('Indice')
+plt.legend(title='Año', bbox_to_anchor=(1.05, 1), loc='upper left')
+plt.grid(alpha=0.3)
+plt.show()
+```
+
+**Comparación mensual del IGAE**
+
+```{python}
+#| code-fold: true
+#| fig-align: "center"
+
+plt.figure(figsize=(12, 6))
+sns.lineplot(data=df_igae_anual, x='Año', y='IGAE', hue='Nombre_mes', marker='o', palette='tab10')
+plt.title('Comparación Mensual del IGAE')
+plt.xlabel('Año')
+plt.ylabel('Indice')
+plt.legend(title='Mes', bbox_to_anchor=(1.05, 1), loc='upper left')
+plt.grid(alpha=0.3)
+plt.show()
+```
+
+
+
+```{python}
+#| code-fold: true
+#| fig-align: "center"
+
+fig = px.line(df_igae_anual, x='Año', y='IGAE', markers=True, color='Nombre_mes', title='Comparación Mensual de IGAE', labels={'IGAE'})
+fig.update_layout(legend_title_text='Mes', plot_bgcolor='rgba(116, 60, 60, 0)', xaxis=dict(tickmode='linear'))
+fig.update
+fig.update_xaxes(dtick=1, gridcolor='rgba(138, 132, 132, 0.77)')
+fig.update_yaxes(gridcolor='rgba(138, 132, 132, 0.77)')
+
+```
+
+
+**Boxplot trimestral de IMSS**
+
+Con esta gráfica, se busca visualizar la distribución del IGAE por trimestre a lo largo de los años. Esto permite identificar patrones estacionales, variabilidad y posibles valores atípicos en cada trimestre, lo que resulta útil para el análisis de tendencias en la actividad económica.
+
+
+```{python}
+#| code-fold: true
+#| fig-align: "center"
+
+df_igae_anual['Trimestre'] = df_igae_anual['Fecha'].dt.to_period('Q')
+
+# Variable combinada de año y trimestre para el eje x
+df_igae_anual['Año_Trimestre'] = df_igae_anual['Año'].astype(str) + '-Q' + df_igae_anual['Trimestre'].dt.quarter.astype(str)
+
+plt.figure(figsize=(12, 6))
+sns.boxplot(data=df_igae_anual, x='Año_Trimestre', y='IGAE', hue='Año', palette= 'Paired')
+plt.title('Boxplot Trimestral del IGAE')
+plt.xlabel('Año-Trimestre')
+plt.ylabel('Indice')
+plt.xticks(rotation=45)
+plt.grid(alpha=0.3)
+plt.legend(title='Año', bbox_to_anchor=(1.05, 1), loc='upper left')
+plt.show()
+
+
+```
+
+
+**Heatmap del IGAE**
+
+
+```{python}
+#| code-fold: true
+#| fig-align: "center"
+
+# Preparación de datos para el heatmap
+heatmap_data = df_igae_anual.pivot_table(index='Mes', columns='Año', values='IGAE')
+
+plt.figure(figsize=(12, 6))
+sns.heatmap(heatmap_data, annot=True, linewidths=0.5, fmt=".1e", cmap='Spectral')
+plt.title('Heatmap del IGAE por Mes y Año')
+plt.xlabel('Año')
+plt.ylabel('Mes')
+plt.yticks(ticks = np.linspace(0.5, 11.5, 12), labels=[calendar.month_abbr[i] for i in range(1, 13)], rotation=0)
+plt.show()
+```
+
+
+**Superficie IGAE**
+
+```{python}
+#| code-fold: true
+#| fig-align: "center"
+
+Z = heatmap_data.values
+X = heatmap_data.columns.astype(str) #Años
+Y = calendar.month_abbr[1:13] #Meses
+
+fig = go.Figure(data=[go.Surface(z=Z, x=X, y=Y, 
+                contours=dict(
+        x=dict(
+            show=True,          # Líneas por año sobre la superficie
+            color="white",
+            width=2
+        ),
+        y=dict(
+            show=True,          # Líneas por mes sobre la superficie
+            color="white",
+            width=2
+        )
+    ),
+                colorscale='Spectral')])
+fig.update_layout(title='Superficie del IGAE',
+                  scene=dict(xaxis_title='Año', yaxis_title='Mes', zaxis_title='Indice'),
+                  autosize=True,
+                  height=600)
+```
+
+
+**Descomposición de la serie temporal del IGAE**
+
+Una serie temporal $Y_t$ se puede descomponer en tres componentes principales: tendencia ($T_t$), estacionalidad ($S_t$) y ruido o componente aleatorio ($R_t$). La fórmula general para la descomposición aditiva es:
+
+\begin{equation}
+Y_t = T_t + S_t + R_t
+\end{equation}
+
+También existe la descomposición multiplicativa, que se expresa como:
+
+\begin{equation}
+Y_t = T_t \times S_t \times R_t
+\end{equation}
+
+
+**Descomposición aditiva de la serie temporal del IGAE**
+
+```{python}
+#| code-fold: true
+#| fig-align: "center"
+#| fig-cap: "Descomposición aditiva del IGAE"
+
+decomposition_add = seasonal.seasonal_decompose(igae_recent, model='additive', period=12)
+
+plt.figure(figsize=(12, 8))
+plt.subplot(4,1,1)
+plt.plot(igae_recent,color='blue')
+plt.title('Serie Temporal Original')
+
+plt.subplot(4,1,2)
+plt.plot(decomposition_add.trend,color='orange')
+plt.title('Tendencia')
+
+plt.subplot(4,1,3)
+plt.plot(decomposition_add.seasonal,color='green')
+plt.title('Estacionalidad')
+
+plt.subplot(4,1,4)
+plt.plot(decomposition_add.resid,color='red')
+plt.title('Ruido')
+plt.tight_layout()
+plt.show()
+
+```
+
+
+**Descomposición multiplicativa de la serie temporal de IMSS**
+
+```{python}
+#| code-fold: true
+#| fig-align: "center"
+#| fig-cap: "Descomposición multiplicativa de la serie temporal de IMSS"
+
+decomposition_mul = seasonal.seasonal_decompose(igae_recent, model='multiplicative', period=12)
+plt.figure(figsize=(12, 8))
+plt.subplot(4,1,1)
+plt.plot(igae_recent,color='blue')
+plt.title('Serie Temporal Original')
+
+plt.subplot(4,1,2)
+plt.plot(decomposition_mul.trend,color='orange')
+plt.title('Tendencia')
+
+plt.subplot(4,1,3)
+plt.plot(decomposition_mul.seasonal,color='green')
+plt.title('Estacionalidad')
+
+plt.subplot(4,1,4)
+plt.plot(decomposition_mul.resid,color='red')
+plt.title('Ruido')
+plt.tight_layout()
+plt.show()
+```
+
+## Valores financieros
+
+Ahora se grafican las series temporales de los precios de las acciones de Netflix (NFLX), Disney (DIS), Starbucks (SBUX), Tesla (TSLA) y Volaris (VLRS) utilizando la biblioteca `yfinance` para obtener los datos históricos de las acciones y herramientas de visualización para analizarlos.
+
+Estas empresas representan distintos sectores, como entretenimiento, consumo, tecnología y transporte aéreo, lo que permite comparar su evolución en el tiempo y analizar su desempeño en distintos contextos económicos. El periodo de análisis se establece desde el 1 de enero de 2020 hasta el 31 de diciembre de 2025.
+
+
+```{python}
+#| code-fold: true
+#| fig-align: "center"
+
+import yfinance as yf
+import pandas as pd
+import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+import seaborn as sns
+import numpy as np
+from statsmodels.tsa import seasonal
+
+tickers = ["NFLX", "DIS", "SBUX", "TSLA", "VLRS"]
+
+start_date = "2020-01-01"
+end_date = "2025-12-31"
+
+df_yf = yf.download(tickers, start=start_date, end=end_date, interval="1d")["Close"]
+
+print(df_yf.head())
+print(df_yf.info())
+```
+
+**Gráfica de los precios de las acciones**
+
+```{python}
+#| code-fold: true
+#| fig-align: "center"
+
+fig = go.Figure()
+for ticker in tickers:
+    fig.add_trace(go.Scatter(x=df_yf.index, y=df_yf[ticker], name=ticker))
+fig.update_layout(title='Precios de las acciones (2020-2025)', xaxis_title='Fecha', yaxis_title='Precio (USD)', legend_title_text='Acciones', hovermode='x unified')
+fig.update_xaxes(rangeslider_visible=True, gridcolor='rgba(138, 132, 132, 0.77)')
+fig.update_yaxes(gridcolor='rgba(138, 132, 132, 0.77)')
+fig.show()  
+```
+
+
+```{python}
+print(type(df_yf))
+print(df_yf.columns.tolist())
+print(df_yf.head(2))
+```
+
+Ahora se selecciona la acción de Tesla (TSLA) para realizar un análisis más detallado de su serie temporal, incluyendo distintas visualizaciones y la descomposición de la serie temporal para identificar sus componentes de tendencia, estacionalidad y ruido.
+
+**Candlestick de TSLA**
+
+```{python}
+#| code-fold: true
+#| fig-align: "center"
+
+import yfinance as yf
+import plotly.graph_objects as go
+import pandas as pd
+
+# Descargar datos recientes
+df_tsla_ohlc = yf.Ticker("TSLA").history(period="6mo", interval="1d", auto_adjust=False)
+
+# Resetear índice para asegurar que la fecha quede bien
+df_tsla_ohlc = df_tsla_ohlc.reset_index()
+
+# Verificar y limpiar columnas necesarias
+df_tsla_ohlc = df_tsla_ohlc[["Date", "Open", "High", "Low", "Close"]].dropna()
+
+fig = go.Figure(data=[go.Candlestick(
+    x=df_tsla_ohlc["Date"],
+    open=df_tsla_ohlc["Open"],
+    high=df_tsla_ohlc["High"],
+    low=df_tsla_ohlc["Low"],
+    close=df_tsla_ohlc["Close"]
+)])
+
+fig.update_layout(
+    title="Gráfico de velas de TSLA",
+    xaxis_title="Fecha",
+    yaxis_title="Precio (USD)"
+)
+
+fig.update_xaxes(rangeslider_visible=True)
+fig.show()
+```
+
+
+
+**Resumen estadístico de los precios de TSLA**
+
+```{python}
+#| code-fold: true
+
+tsla_ts = df_yf["TSLA"].dropna()
+print(tsla_ts.info())
+print(f"Fecha de inicio: {tsla_ts.index.min()}")
+print(f"Fecha de fin: {tsla_ts.index.max()}")
+print("------")
+print("Estadísticas descriptivas de TSLA:")
+print(tsla_ts.describe())
+
+```
+
+**Comparación anual de TSLA**
+
+```{python}
+#| code-fold: true
+#| fig-align: "center"
+
+tsla_df = tsla_ts.reset_index()
+
+
+tsla_df.columns = ["Date", "TSLA"]
+
+tsla_df['Año'] = tsla_df['Date'].dt.year
+tsla_df['Mes'] = tsla_df['Date'].dt.month
+tsla_df["Nombre_mes"] = tsla_df['Date'].dt.strftime('%b')
+tsla_df['Dia_año'] = tsla_df['Date'].dt.dayofyear
+
+plt.figure(figsize=(12, 6))
+sns.lineplot(
+    data=tsla_df,
+    x='Nombre_mes',
+    y='TSLA',
+    hue='Año',
+    marker='o',
+    palette='tab10'
+)
+
+plt.title('Comparación anual de TSLA (mensual)')
+plt.xlabel('Mes')
+plt.ylabel('Precio (USD)')
+plt.legend(title='Año', bbox_to_anchor=(1.05, 1), loc='upper left')
+plt.grid(alpha=0.3)
+plt.show()
+```
+
+**Comparación anual de TSLA(diaria)**
+
+```{python}
+#| code-fold: true
+#| fig-align: "center"
+
+tsla_df = tsla_ts.reset_index()
+
+
+tsla_df.columns = ["Date", "TSLA"]
+
+tsla_df['Año'] = tsla_df['Date'].dt.year
+tsla_df['Mes'] = tsla_df['Date'].dt.month
+tsla_df["Nombre_mes"] = tsla_df['Date'].dt.strftime('%b')
+tsla_df['Dia_año'] = tsla_df['Date'].dt.dayofyear
+
+plt.figure(figsize=(12, 6))
+sns.lineplot(
+    data=tsla_df,
+    x='Nombre_mes',
+    y='TSLA',
+    hue='Año',
+    marker='o',
+    palette='tab10'
+)
+
+plt.title('Comparación anual de TSLA (mensual)')
+plt.xlabel('Mes')
+plt.ylabel('Precio (USD)')
+plt.legend(title='Año', bbox_to_anchor=(1.05, 1), loc='upper left')
+plt.grid(alpha=0.3)
+plt.show()
+```
+
+
+**Boxplot trimestral de TSLA**
+
+```{python}
+#| code-fold: true
+#| fig-align: "center"
+
+tsla_df['Trimestre'] = tsla_df['Date'].dt.to_period('Q')
+
+tsla_df['Año_Trimestre'] = (
+    tsla_df['Año'].astype(str)
+    + '-Q'
+    + tsla_df['Trimestre'].dt.quarter.astype(str)
+)
+
+plt.figure(figsize=(12, 6))
+
+sns.boxplot(
+    data=tsla_df,
+    x='Año_Trimestre',
+    y='TSLA',
+    hue='Año',
+    palette='Paired'
+)
+
+plt.title('Boxplot trimestral de TSLA')
+plt.xlabel('Año-Trimestre')
+plt.ylabel('Precio (USD)')
+plt.xticks(rotation=45)
+plt.grid(alpha=0.3)
+plt.legend(title='Año', bbox_to_anchor=(1.05, 1), loc='upper left')
+plt.show()
+```
+
+**Heatmap de TSLA**
+
+```{python}
+#| code-fold: true
+#| fig-align: "center"
+
+tsla_df['Mes-dia'] = tsla_df['Date'].dt.strftime('%b-%d')
+
+heatmap_data_tsla = tsla_df.pivot_table(
+    index='Mes-dia',
+    columns='Año',
+    values='TSLA'
+)
+
+orden = (tsla_df.drop_duplicates('Mes-dia')
+               .sort_values('Dia_año')['Mes-dia']
+               .tolist())
+
+heatmap_data_tsla = heatmap_data_tsla.reindex(orden)
+
+heatmap_data_tsla = heatmap_data_tsla.ffill().bfill()
+
+plt.figure(figsize=(12, 8))
+
+sns.heatmap(
+    heatmap_data_tsla,
+    annot=False,
+    cmap='Spectral',
+    linewidths=0
+)
+
+plt.title('Heatmap de TSLA por fecha y año')
+plt.xlabel('Año')
+plt.ylabel('Fecha')
+
+plt.tight_layout()
+plt.show()
+```
+
+
+**Superficie de TSLA**
+
+```{python}
+#| code-fold: true
+#| fig-align: "center"
+
+Z = heatmap_data_tsla.values
+X = heatmap_data_tsla.columns.astype(str)
+Y = heatmap_data_tsla.index
+
+fig = go.Figure(data=[go.Surface(
+    z=Z, x=X, y=Y,
+    contours=dict(
+        x=dict(show=True, color="white", width=2),
+        y=dict(show=True, color="white", width=2)
+    ),
+    colorscale='Spectral'
+)])
+
+fig.update_layout(
+    title='Superficie de TSLA',
+    scene=dict(
+        xaxis_title='Año',
+        yaxis_title='Fecha',
+        zaxis_title='Precio (USD)'
+    ),
+    height=600
+)
+
+fig.show()
+```
+
+**Descomposición aditiva de TSLA**
+
+```{python}
+#| code-fold: true
+#| fig-align: "center"
+#| fig-cap: "Descomposición aditiva de la serie temporal de TSLA"
+
+decomposition_add_tsla = seasonal.seasonal_decompose(tsla_ts, model='additive', period=252)
+
+plt.figure(figsize=(12, 8))
+
+plt.subplot(4,1,1)
+plt.plot(tsla_ts, color='blue')
+plt.title('Serie temporal original')
+
+plt.subplot(4,1,2)
+plt.plot(decomposition_add_tsla.trend, color='orange')
+plt.title('Tendencia')
+
+plt.subplot(4,1,3)
+plt.plot(decomposition_add_tsla.seasonal, color='green')
+plt.title('Estacionalidad')
+
+plt.subplot(4,1,4)
+plt.plot(decomposition_add_tsla.resid, color='red')
+plt.title('Ruido')
+
+plt.tight_layout()
+plt.show()
+```
+
+**Descomposición multiplicativa de TSLA**
+
+
+```{python}
+#| code-fold: true
+#| fig-align: "center"
+#| fig-cap: "Descomposición multiplicativa de la serie temporal de TSLA"
+
+decomposition_mul_tsla = seasonal.seasonal_decompose(tsla_ts, model='multiplicative', period=252)
+
+plt.figure(figsize=(12, 8))
+
+plt.subplot(4,1,1)
+plt.plot(tsla_ts, color='blue')
+plt.title('Serie temporal original')
+
+plt.subplot(4,1,2)
+plt.plot(decomposition_mul_tsla.trend, color='orange')
+plt.title('Tendencia')
+
+plt.subplot(4,1,3)
+plt.plot(decomposition_mul_tsla.seasonal, color='green')
+plt.title('Estacionalidad')
+
+plt.subplot(4,1,4)
+plt.plot(decomposition_mul_tsla.resid, color='red')
+plt.title('Ruido')
+
+plt.tight_layout()
+plt.show()
+```
+
+
+**CONCLUSIONES PERSONALES**
+
+Con este trabajo me di cuenta de lo útiles que son las series de tiempo para ver cómo evolucionan las cosas. El IGAE me sirvió para entender el panorama general de la economía, y las acciones mostraron movimientos más puntuales y menos predecibles.
